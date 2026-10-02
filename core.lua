@@ -12,7 +12,7 @@ local ChangeOptionRemote=nil
 local LastCleanup=0
 local FrameSkip=0
 local ESPUpdateLock=false
-local S={Plr={SP=16,SO=false},Kil={AD=7,AO=false,AB=false,Last=0,CD=4,Can=true},Aim={M=nil,TP="Head",AAO=false,AAD=50,AAS=0.15,Lock=true},ESP={KO=false,SO=false,GO=false,PO=false,GFO=false,FT=0.85,OT=0.5,SD=true},Vis={NF=false,FB=false,CS=12,CG=6,CO=false,CT="Sniper",CD=3,CTH=2},Col={K=Color3.fromRGB(255,80,80),SV=Color3.fromRGB(80,255,80),PL=Color3.fromRGB(255,200,80),GL=Color3.fromRGB(255,0,0),GM=Color3.fromRGB(255,255,0),GH=Color3.fromRGB(0,255,0),CR=Color3.fromRGB(255,255,255),CL=Color3.fromRGB(255,0,0),GF=Color3.fromRGB(255,100,255)},Cam={Mode="Default"},Rep={Gen=false,Heal=false},Gift={GO=false,Range=6}}
+local S={Plr={SP=16,SO=false},Kil={AD=7,AO=false,AB=false,Last=0,CD=4,Can=true},Aim={M=nil,TP="Head",AAO=false,AAD=50,AAS=0.15,Lock=true},ESP={KO=false,SO=false,GO=false,PO=false,GFO=false,FT=0.85,OT=0.5,SD=true},Vis={NF=false,FB=false,CS=12,CG=6,CO=false,CT="Sniper",CD=3,CTH=2},Col={K=Color3.fromRGB(255,80,80),SV=Color3.fromRGB(80,255,80),PL=Color3.fromRGB(255,200,80),GL=Color3.fromRGB(255,0,0),GM=Color3.fromRGB(255,255,0),GH=Color3.fromRGB(0,255,0),CR=Color3.fromRGB(255,255,255),CL=Color3.fromRGB(255,0,0),GF=Color3.fromRGB(255,100,255)},Cam={Mode="Default"},Rep={Gen=false,Heal=false},Gift={GO=false,Range=6},Parry={PO=false,Dist=12,CD=1.5,Last=0}}
 local CrosshairTypes,CameraModes,TargetParts={"Sniper","Weapon","Dot"},{"Default","FirstPerson","ThirdPerson"},{"Head","Body","RightArm","LeftArm"}
 
 pcall(function() local opts=RST:FindFirstChild("Remotes") if opts then local o=opts:FindFirstChild("Options") if o then ChangeOptionRemote=o:FindFirstChild("changeoption") end end end)
@@ -45,9 +45,11 @@ local function GetRole(p)
         local rs=tostring(r):lower() 
         if rs:find("killer") then return "Killer" elseif rs:find("survivor") then return "Survivor" end 
     end 
+    if c:GetAttribute("IsKiller")==true then return "Killer" end 
+    if c:FindFirstChild("Weapon") or c:FindFirstChild("Knife") or c:FindFirstChild("Blade") or c:FindFirstChild("Axe") or c:FindFirstChild("Hammer") then return "Killer" end 
     if p.Team then 
         local t=p.Team.Name:lower() 
-        if t:find("killer") then return "Killer" elseif t:find("survivor") then return "Survivor" end 
+        if t:find("killer") or t:find("katil") or t:find("titan") then return "Killer" elseif t:find("survivor") then return "Survivor" end 
     end 
     return nil 
 end
@@ -178,13 +180,16 @@ function Lobby:Check()
     if c then 
         local r=c:GetAttribute("Role") or c:GetAttribute("PlayerRole") 
         if r and (tostring(r):lower():find("killer") or tostring(r):lower():find("survivor")) then return false end 
+        if c:GetAttribute("IsKiller")==true or c:FindFirstChild("Weapon") then return false end 
     end 
     if LP.Team then 
         local t=LP.Team.Name:lower() 
-        if t:find("survivor") or t:find("killer") then return false end 
+        if t:find("survivor") or t:find("killer") or t:find("titan") then return false end 
         if t:find("lobby") or t:find("waiting") or t:find("spectator") then return true end 
     end 
-    return #CachedGens==0 
+    if WS:FindFirstChild("Map") then return false end 
+    if #CachedGens>0 then return false end 
+    return false 
 end
 
 function Lobby:CleanUp() 
@@ -323,9 +328,9 @@ function PS:GetState(p)
     return {Alive=IsAlive(p),Knocked=self:Knocked(p),Hooked=self:Hooked(p),Carried=self:Carried(p),CanAim=self:CanAim(p)} 
 end
 
--- OPTIMIZED: Longer scan intervals
+-- OPTIMIZED: Scan intervals
 local function ScanGens() 
-    if tick()-LastGenScan<45 then return CachedGens end 
+    if tick()-LastGenScan<4 then return CachedGens end 
     if Lobby:Check() then CachedGens={} return CachedGens end 
     LastGenScan=tick() 
     local newGens={} 
@@ -336,27 +341,44 @@ local function ScanGens()
             table.insert(newGens,o) 
         end 
     end 
+    if #newGens==0 and mapFolder~=WS then 
+        for _,o in pairs(WS:GetDescendants()) do 
+            local n=o.Name:lower() 
+            if (n=="generator" or n:find("generator") or n=="gen") and (o:IsA("Model") or o:IsA("BasePart")) then 
+                table.insert(newGens,o) 
+            end 
+        end 
+    end 
     CachedGens=newGens 
     return CachedGens 
-end
+end 
 
 local function GetGenStatus(g) 
     if not g or not g.Parent then return "RUSAK",0 end 
     local c=GenCache[g] 
-    if c and tick()-c.t<12 then return c.s,c.p end 
+    if c and tick()-c.t<1.5 then return c.s,c.p end 
     local prog=0 
-    for n,v in pairs(g:GetAttributes()) do 
-        local nl=n:lower() 
-        if nl:find("progress") and type(v)=="number" then prog=v break end 
-        if (nl:find("complete") or nl:find("done") or nl:find("power")) and v==true then prog=100 break end 
+    if g:GetAttribute("Progress") and type(g:GetAttribute("Progress"))=="number" then 
+        prog=g:GetAttribute("Progress") 
+    elseif g:GetAttribute("RepairProgress") and type(g:GetAttribute("RepairProgress"))=="number" then 
+        prog=g:GetAttribute("RepairProgress") 
+    else 
+        for n,v in pairs(g:GetAttributes()) do 
+            local nl=n:lower() 
+            if nl:find("progress") and type(v)=="number" then prog=v break end 
+            if (nl:find("complete") or nl:find("done") or nl:find("power")) and v==true then prog=100 break end 
+        end 
     end 
+    if prog>0 and prog<=1 then prog=prog*100 end 
     if prog==0 then 
-        for _,ch in pairs(g:GetChildren()) do 
-            if (ch:IsA("NumberValue") or ch:IsA("IntValue")) and (ch.Name:lower():find("progress") or ch.Name:lower():find("power")) then 
+        for _,ch in pairs(g:GetDescendants()) do 
+            if (ch:IsA("NumberValue") or ch:IsA("IntValue")) and (ch.Name:lower():find("progress") or ch.Name:lower():find("power") or ch.Name:lower():find("repair") or ch.Name:lower():find("percent")) then 
                 prog=ch.Value break 
             end 
         end 
+        if prog>0 and prog<=1 then prog=prog*100 end 
     end 
+    if g:FindFirstChild("Finished") or g:FindFirstChild("Repaired") or g:FindFirstChild("Done") then prog=100 end 
     local st=prog>=100 and "HIDUP" or prog>=50 and "PROGRESS" or prog>0 and "LOW" or "RUSAK" 
     GenCache[g]={s=st,p=prog,t=tick()} 
     return st,prog 
@@ -379,6 +401,33 @@ local function SetupSkill()
             end 
             return old(self,...) 
         end)) 
+    end) 
+    pcall(function() 
+        local VIM=game:GetService("VirtualInputManager") 
+        task.spawn(function() 
+            while task.wait(0.04) do 
+                if S.Rep.Gen or S.Rep.Heal then 
+                    pcall(function() 
+                        local pg=LP:FindFirstChild("PlayerGui") 
+                        if pg and VIM then 
+                            for _,gui in ipairs(pg:GetDescendants()) do 
+                                if gui:IsA("Frame") and (gui.Name:lower():find("skillcheck") or gui.Name:lower():find("beceri")) then 
+                                    local ind=gui:FindFirstChild("Indicator") or gui:FindFirstChild("Pointer") or gui:FindFirstChild("Bar") 
+                                    if ind and ind.Visible then 
+                                        local sz=gui:FindFirstChild("SuccessZone") or gui:FindFirstChild("PerfectZone") 
+                                        if sz then 
+                                            VIM:SendKeyEvent(true,Enum.KeyCode.Space,false,game) 
+                                            task.wait(0.02) 
+                                            VIM:SendKeyEvent(false,Enum.KeyCode.Space,false,game) 
+                                        end 
+                                    end 
+                                end 
+                            end 
+                        end 
+                    end) 
+                end 
+            end 
+        end) 
     end) 
 end
 
@@ -436,7 +485,7 @@ local function StartHeal()
                         if tr and (mr.Position-tr.Position).Magnitude<10 then 
                             local pc=GetChar(p) 
                             if pc then 
-                                for _,o in pairs(pc:GetChildren()) do 
+                                for _,o in pairs(pc:GetDescendants()) do 
                                     if o:IsA("ProximityPrompt") then pcall(fireproximityprompt,o) break end 
                                 end 
                             end 
@@ -468,7 +517,7 @@ local function StartRepair()
                 if g and g.Parent and GetGenStatus(g)~="HIDUP" then 
                     local ok,pos=pcall(function() return g:IsA("Model") and g:GetBoundingBox().Position or g.Position end) 
                     if ok and pos and (mr.Position-pos).Magnitude<10 then 
-                        for _,o in pairs(g:GetChildren()) do 
+                        for _,o in pairs(g:GetDescendants()) do 
                             if o:IsA("ProximityPrompt") then pcall(fireproximityprompt,o) break end 
                         end 
                         for _,r in pairs(RepairRemotes) do pcall(function() r:FireServer(g) end) end 
@@ -904,13 +953,20 @@ local function StopGESP()
 end
 
 local function ScanPallets() 
-    if tick()-LastPalletScan<180 then return CachedPallets end 
+    if tick()-LastPalletScan<10 then return CachedPallets end 
     if Lobby:Check() then CachedPallets={} return CachedPallets end 
     LastPalletScan=tick() 
     local newPallets={} 
     local mapFolder=WS:FindFirstChild("Map") or WS 
     for _,o in pairs(mapFolder:GetDescendants()) do 
-        if o.Name=="Palletwrong" then table.insert(newPallets,o) end 
+        local n=o.Name:lower() 
+        if o.Name=="Palletwrong" or n:find("pallet") then table.insert(newPallets,o) end 
+    end 
+    if #newPallets==0 and mapFolder~=WS then 
+        for _,o in pairs(WS:GetDescendants()) do 
+            local n=o.Name:lower() 
+            if o.Name=="Palletwrong" or n:find("pallet") then table.insert(newPallets,o) end 
+        end 
     end 
     CachedPallets=newPallets 
     return CachedPallets 
@@ -1053,6 +1109,18 @@ local function StartAtk()
             if targetFound then 
                 S.Kil.Can=false S.Kil.Last=tick() 
                 pcall(function() if AttackRemotes.Basic then AttackRemotes.Basic:FireServer() end end) 
+                pcall(function() 
+                    local myChar=GetChar(LP) 
+                    if myChar then 
+                        local weapon=myChar:FindFirstChild("Weapon") 
+                        if weapon and weapon:IsA("Tool") then 
+                            weapon:Activate() 
+                        else 
+                            local tool=myChar:FindFirstChildOfClass("Tool") 
+                            if tool then tool:Activate() end 
+                        end 
+                    end 
+                end) 
                 task.wait(0.3) 
                 pcall(function() if AttackRemotes.Hit then AttackRemotes.Hit:FireServer(targetFound) end end) 
                 task.wait(0.1) 
@@ -1066,6 +1134,41 @@ end
 local function StopAtk() S.Kil.AO=false end
 local function SetAtkDist(d) S.Kil.AD=math.clamp(d,3,10) end
 local function SetAtkCD(c) S.Kil.CD=math.clamp(c,2,6) end
+
+local function StartParry() 
+    if S.Parry and S.Parry.PO then return end 
+    if not S.Parry then S.Parry={PO=false,Dist=12,CD=1.5,Last=0} end 
+    S.Parry.PO=true 
+    task.spawn(function() 
+        local VIM=game:GetService("VirtualInputManager") 
+        while S.Parry.PO do 
+            task.wait(0.08) 
+            if not S.Parry.PO then break end 
+            if Lobby:Check() then task.wait(2) continue end 
+            local myRole=GetRole(LP) 
+            if myRole~="Killer" then 
+                local nearestK,dist=GetNearestKiller() 
+                if nearestK and dist<=S.Parry.Dist and tick()-(S.Parry.Last or 0)>S.Parry.CD then 
+                    local kc=GetChar(nearestK) 
+                    if kc and (kc:FindFirstChild("Weapon") or GetRole(nearestK)=="Killer") then 
+                        S.Parry.Last=tick() 
+                        pcall(function() 
+                            if VIM then 
+                                VIM:SendKeyEvent(true,Enum.KeyCode.F,false,game) 
+                                task.wait(0.03) 
+                                VIM:SendKeyEvent(false,Enum.KeyCode.F,false,game) 
+                            end 
+                        end) 
+                    end 
+                end 
+            end 
+        end 
+    end) 
+end
+
+local function StopParry() 
+    if S.Parry then S.Parry.PO=false end 
+end
 
 local function StartBlind() 
     if S.Kil.AB then return end 
@@ -1272,7 +1375,7 @@ local function StopAll()
     StopKESP() StopSESP() StopGESP() StopPESP() StopGiftESP() 
     WSys:Stop() Aim:Stop() Cross:Stop() 
     StopAtk() StopBlind() StopFog() SetBright(false) StopLag() SetCam("Default") 
-    StopRepair() StopHeal() StopGift() Lobby:Stop() 
+    StopRepair() StopHeal() StopGift() StopParry() Lobby:Stop() 
     DCAll() 
     task.defer(function() 
         CleanAllESP() 
@@ -1294,6 +1397,7 @@ end)
 
 CheckDrawingSupport()
 SetupAntiSlow()
+SetupSkill()
 
 getgenv().UHCore={
     WalkspeedSystem=WSys,AimSystem=Aim,CrosshairSystem=Cross,LobbyDetection=Lobby,PlayerState=PS,
@@ -1304,6 +1408,9 @@ getgenv().UHCore={
     StartGiftESP=StartGiftESP,StopGiftESP=StopGiftESP,
     StartAutoAttack=StartAtk,StopAutoAttack=StopAtk,
     SetAutoAttackDistance=SetAtkDist,SetAutoAttackCooldown=SetAtkCD,
+    StartAutoParry=StartParry,StopAutoParry=StopParry,
+    SetAutoParryDistance=function(d) if S.Parry then S.Parry.Dist=math.clamp(d,5,30) end end,
+    SetAutoParryCooldown=function(c) if S.Parry then S.Parry.CD=math.clamp(c,0.2,5) end end,
     StartAntiBlind=StartBlind,StopAntiBlind=StopBlind,
     StartAutoRepairGen=StartRepair,StopAutoRepairGen=StopRepair,
     StartAutoHeal=StartHeal,StopAutoHeal=StopHeal,

@@ -24,7 +24,7 @@ local function LH()
     local C = getgenv().UHCore
     if not C then
         print("=== LOADING CORE FROM URL ===")
-        local success, err = pcall(function() loadstring(game:HttpGet(CFG.CU))() end)
+        local success, err = pcall(function() loadstring(game:HttpGet(CFG.CU .. "?v=" .. tostring(tick())))() end)
         if not success then warn("Core Load Error:", err); SN("Ultimate Hub", "Failed to load core!", 5); return end
         task.wait(0.5)
         C = getgenv().UHCore
@@ -66,6 +66,8 @@ local function LH()
     SV:CreateSection("Auto Actions")
     SV:CreateToggle({Name = "Auto Generator Repair", CurrentValue = false, Callback = function(v) pcall(function() if v then C.StartAutoRepairGen() else C.StopAutoRepairGen() end end) end})
     SV:CreateToggle({Name = "Auto Heal Teammate", CurrentValue = false, Callback = function(v) pcall(function() if v then C.StartAutoHeal() else C.StopAutoHeal() end end) end})
+    SV:CreateToggle({Name = "Auto Parry Killer", CurrentValue = false, Callback = function(v) pcall(function() if v then C.StartAutoParry() else C.StopAutoParry() end end) end})
+    SV:CreateSlider({Name = "Parry Distance", Range = {5, 25}, Increment = 1, CurrentValue = 12, Callback = function(v) pcall(function() C.SetAutoParryDistance(v) end) end})
     SV:CreateSection("Environment")
     SV:CreateToggle({Name = "No Fog", CurrentValue = false, Callback = function(v) pcall(function() if v then C.StartNoFog() else C.StopNoFog() end end) end})
     SV:CreateToggle({Name = "Fullbright", CurrentValue = false, Callback = function(v) pcall(function() C.SetFullbright(v) end) end})
