@@ -587,7 +587,8 @@ local function StartRepair()
                         end 
                     end 
                     if pp then pcall(fireproximityprompt,pp) end 
-                    for _,r in pairs(RepairRemotes) do pcall(function() r:FireServer(g) end) end 
+                    -- HAPUS: for _,r in pairs(RepairRemotes) do pcall(function() r:FireServer(g) end) end 
+                    -- (Remote akan terkirim otomatis oleh ProximityPrompt, jika dikirim manual malah bikin nyangkut)
                     break 
                 end 
             end 
@@ -597,6 +598,51 @@ local function StartRepair()
 end
 
 local function StopRepair() S.Rep.Gen=false end
+
+local function StartAutoUnhook()
+    if S.Rep.Unhook then return end
+    S.Rep.Unhook=true
+    task.spawn(function()
+        local UnHookRemote = RST:FindFirstChild("Remotes") and RST.Remotes:FindFirstChild("Carry") and RST.Remotes.Carry:FindFirstChild("UnHookEvent")
+        while S.Rep.Unhook do
+            task.wait(1.5)
+            if not S.Rep.Unhook then break end
+            if Lobby:Check() then task.wait(3) continue end
+            local mr=GetRoot(GetChar(LP))
+            if not mr then continue end
+            
+            -- Cari teman yang di-hook di dekat kita
+            for _,p in pairs(Players:GetPlayers()) do
+                if p and p~=LP and PS:Hooked(p) then
+                    local tr = GetRoot(GetChar(p))
+                    if tr and (mr.Position - tr.Position).Magnitude < 15 then
+                        -- Cari HookPoint di sekitar
+                        local hp = nil
+                        for _, v in ipairs(workspace:GetDescendants()) do
+                            if v.Name == "HookPoint" and v:IsA("BasePart") and (v.Position - tr.Position).Magnitude < 10 then
+                                hp = v
+                                break
+                            end
+                        end
+                        if hp and UnHookRemote then
+                            pcall(function() UnHookRemote:FireServer(hp) end)
+                        end
+                        
+                        -- Coba fire proximity prompt juga kalau ada
+                        local pc = GetChar(p)
+                        if pc then
+                            for _,o in pairs(pc:GetDescendants()) do
+                                if o:IsA("ProximityPrompt") then pcall(fireproximityprompt,o) end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function StopAutoUnhook() S.Rep.Unhook=false end
 
 -- OPTIMIZED: Cache drop zones separately, scan less frequently
 local function ScanDropZones() 
@@ -1444,7 +1490,7 @@ local function StopAll()
     StopKESP() StopSESP() StopGESP() StopPESP() StopGiftESP() 
     WSys:Stop() Aim:Stop() Cross:Stop() 
     StopAtk() StopBlind() StopFog() SetBright(false) StopLag() SetCam("Default") 
-    StopRepair() StopHeal() StopGift() StopParry() Lobby:Stop() 
+    StopRepair() StopHeal() StopGift() StopParry() StopAutoUnhook() Lobby:Stop() 
     DCAll() 
     task.defer(function() 
         CleanAllESP() 
@@ -1483,6 +1529,7 @@ getgenv().UHCore={
     StartAntiBlind=StartBlind,StopAntiBlind=StopBlind,
     StartAutoRepairGen=StartRepair,StopAutoRepairGen=StopRepair,
     StartAutoHeal=StartHeal,StopAutoHeal=StopHeal,
+    StartAutoUnhook=StartAutoUnhook,StopAutoUnhook=StopAutoUnhook,
     StartAutoGift=StartGift,StopAutoGift=StopGift,
     StartNoFog=StartFog,StopNoFog=StopFog,
     SetFullbright=SetBright,

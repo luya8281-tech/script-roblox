@@ -226,7 +226,7 @@ local function makeGUI()
 
     -- Title
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Size = UDim2.new(1, -30, 0, 30)
     title.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
     title.Text = "📡 Remote Logger v2.0"
     title.TextColor3 = Color3.new(1,1,1)
@@ -234,6 +234,31 @@ local function makeGUI()
     title.TextSize = 13
     title.Parent = frame
     local tc = Instance.new("UICorner") tc.CornerRadius = UDim.new(0,8) tc.Parent = title
+
+    -- Minimize Button
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.new(0, 30, 0, 30)
+    minBtn.Position = UDim2.new(1, -30, 0, 0)
+    minBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+    minBtn.Text = "—"
+    minBtn.TextColor3 = Color3.new(1,1,1)
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.TextSize = 14
+    minBtn.Parent = frame
+    local mbc = Instance.new("UICorner") mbc.CornerRadius = UDim.new(0,8) mbc.Parent = minBtn
+
+    local isMinimized = false
+    minBtn.MouseButton1Click:Connect(function()
+        isMinimized = not isMinimized
+        minBtn.Text = isMinimized and "◻" or "—"
+        frame.Size = isMinimized and UDim2.new(0, 260, 0, 30) or UDim2.new(0, 260, 0, 160)
+        -- Sembunyikan semua elemen kecuali title & minBtn
+        for _, ch in pairs(frame:GetChildren()) do
+            if ch ~= title and ch ~= minBtn and not ch:IsA("UICorner") then
+                ch.Visible = not isMinimized
+            end
+        end
+    end)
 
     -- Status label
     local statusLbl = Instance.new("TextLabel")
