@@ -61,9 +61,9 @@ local function GetDist(p)
     return 0 
 end
 
--- OPTIMIZED: Less frequent update
+-- OPTIMIZED: Less frequent update (mobile: 8s interval)
 local function UpdatePlayerCache() 
-    if tick()-PlayerCache.LastUpdate<5 then return end 
+    if tick()-PlayerCache.LastUpdate<8 then return end 
     PlayerCache.LastUpdate=tick() 
     local newKillers,newSurvivors={},{} 
     for _,p in pairs(Players:GetPlayers()) do 
@@ -216,7 +216,7 @@ function Lobby:Start()
             self.InGame=not isLobby 
             if wasInGame and not self.InGame then self:CleanUp() end 
             CleanupMemory() 
-            task.wait(5) 
+            task.wait(8)  -- mobile: polling 8s cukup, tidak perlu tiap 5s
         end 
     end) 
 end
@@ -362,7 +362,7 @@ end
 local function GetGenStatus(g) 
     if not g or not g.Parent then return "RUSAK",0 end 
     local c=GenCache[g] 
-    if c and tick()-c.t<1.5 then return c.s,c.p end 
+    if c and tick()-c.t<3 then return c.s,c.p end  -- cache 3 detik (hemat untuk mobile)
     local prog=0 
     if g:GetAttribute("Progress") and type(g:GetAttribute("Progress"))=="number" then 
         prog=g:GetAttribute("Progress") 
@@ -377,9 +377,23 @@ local function GetGenStatus(g)
     end 
     if prog>0 and prog<=1 then prog=prog*100 end 
     if prog==0 then 
-        for _,ch in pairs(g:GetDescendants()) do 
-            if (ch:IsA("NumberValue") or ch:IsA("IntValue")) and (ch.Name:lower():find("progress") or ch.Name:lower():find("power") or ch.Name:lower():find("repair") or ch.Name:lower():find("percent")) then 
-                prog=ch.Value break 
+        -- Cek GetChildren dulu sebelum GetDescendants (lebih cepat)
+        for _,ch in pairs(g:GetChildren()) do 
+            if (ch:IsA("NumberValue") or ch:IsA("IntValue")) then 
+                local cn=ch.Name:lower() 
+                if cn:find("progress") or cn:find("power") or cn:find("repair") or cn:find("percent") then 
+                    prog=ch.Value break 
+                end 
+            end 
+        end 
+        if prog==0 then 
+            for _,ch in pairs(g:GetDescendants()) do 
+                if (ch:IsA("NumberValue") or ch:IsA("IntValue")) then 
+                    local cn=ch.Name:lower() 
+                    if cn:find("progress") or cn:find("power") or cn:find("repair") or cn:find("percent") then 
+                        prog=ch.Value break 
+                    end 
+                end 
             end 
         end 
         if prog>0 and prog<=1 then prog=prog*100 end 
@@ -492,7 +506,7 @@ local function StartHeal()
     SetupSkill() 
     task.spawn(function() 
         while S.Rep.Heal do 
-            task.wait(1.2) 
+            task.wait(1.5)  -- mobile: 1.5s interval
             if not S.Rep.Heal then break end 
             if Lobby:Check() then task.wait(3) continue end 
             local mr=GetRoot(GetChar(LP)) 
@@ -505,9 +519,16 @@ local function StartHeal()
                         if tr and (mr.Position-tr.Position).Magnitude<10 then 
                             local pc=GetChar(p) 
                             if pc then 
-                                for _,o in pairs(pc:GetDescendants()) do 
-                                    if o:IsA("ProximityPrompt") then pcall(fireproximityprompt,o) break end 
+                                local foundpp=nil 
+                                for _,o in pairs(pc:GetChildren()) do 
+                                    if o:IsA("ProximityPrompt") then foundpp=o break end 
                                 end 
+                                if not foundpp then 
+                                    for _,o in pairs(pc:GetDescendants()) do 
+                                        if o:IsA("ProximityPrompt") then foundpp=o break end 
+                                    end 
+                                end 
+                                if foundpp then pcall(fireproximityprompt,foundpp) end 
                             end 
                             for _,r in pairs(HealRemotes) do pcall(function() r:FireServer(p) end) end 
                             break 
@@ -852,7 +873,7 @@ function Aim:Start()
     DC("Aim") 
     local _aimFS=0
     Conn["Aim"]=RS.RenderStepped:Connect(function() 
-        _aimFS=_aimFS+1 if _aimFS%3~=0 then return end
+        _aimFS=_aimFS+1 if _aimFS%5~=0 then return end  -- mobile: 5 frame skip (~12fps)
         if not self.Active or not S.Aim.AAO then return end 
         if Lobby:Check() then self.Target=nil return end 
         Cam=WS.CurrentCamera 
