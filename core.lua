@@ -63,7 +63,7 @@ end
 
 -- OPTIMIZED: Less frequent update
 local function UpdatePlayerCache() 
-    if tick()-PlayerCache.LastUpdate<3 then return end 
+    if tick()-PlayerCache.LastUpdate<5 then return end 
     PlayerCache.LastUpdate=tick() 
     local newKillers,newSurvivors={},{} 
     for _,p in pairs(Players:GetPlayers()) do 
@@ -122,7 +122,7 @@ end
 
 -- OPTIMIZED: Faster cleanup with less overhead
 local function CleanupMemory() 
-    if tick()-LastCleanup<20 then return end 
+    if tick()-LastCleanup<30 then return end 
     LastCleanup=tick() 
     local now=tick() 
     for key,data in pairs(StateCache) do 
@@ -330,23 +330,29 @@ end
 
 -- OPTIMIZED: Scan intervals
 local function ScanGens() 
-    if tick()-LastGenScan<4 then return CachedGens end 
+    if tick()-LastGenScan<8 then return CachedGens end 
     if Lobby:Check() then CachedGens={} return CachedGens end 
     LastGenScan=tick() 
     local newGens={} 
     local mapFolder=WS:FindFirstChild("Map") or WS 
     for _,o in pairs(mapFolder:GetDescendants()) do 
         local n=o.Name:lower() 
-        if (n=="generator" or n:find("generator") or n=="gen") and (o:IsA("Model") or o:IsA("BasePart")) then 
+        -- hanya cocokkan nama persis "generator" atau "gen" (hindari false positif)
+        if (n=="generator" or n=="gen") and o:IsA("Model") then 
             table.insert(newGens,o) 
         end 
     end 
+    -- fallback scan WS hanya jika benar-benar tidak ada di mapFolder
     if #newGens==0 and mapFolder~=WS then 
-        for _,o in pairs(WS:GetDescendants()) do 
-            local n=o.Name:lower() 
-            if (n=="generator" or n:find("generator") or n=="gen") and (o:IsA("Model") or o:IsA("BasePart")) then 
-                table.insert(newGens,o) 
-            end 
+        for _,o in pairs(WS:GetChildren()) do 
+            if o~=mapFolder then
+                for _,d in pairs(o:GetDescendants()) do
+                    local n=d.Name:lower()
+                    if (n=="generator" or n=="gen") and d:IsA("Model") then
+                        table.insert(newGens,d)
+                    end
+                end
+            end
         end 
     end 
     CachedGens=newGens 
@@ -402,30 +408,44 @@ local function SetupSkill()
             return old(self,...) 
         end)) 
     end) 
+    -- VIM skillcheck: 0.15s interval + cache frame names (hemat CPU mobile)
     pcall(function() 
         local VIM=game:GetService("VirtualInputManager") 
+        if not VIM then return end
+        local _skCache,_skCacheT={},0
         task.spawn(function() 
-            while task.wait(0.04) do 
-                if S.Rep.Gen or S.Rep.Heal then 
-                    pcall(function() 
-                        local pg=LP:FindFirstChild("PlayerGui") 
-                        if pg and VIM then 
-                            for _,gui in ipairs(pg:GetDescendants()) do 
-                                if gui:IsA("Frame") and (gui.Name:lower():find("skillcheck") or gui.Name:lower():find("beceri")) then 
-                                    local ind=gui:FindFirstChild("Indicator") or gui:FindFirstChild("Pointer") or gui:FindFirstChild("Bar") 
-                                    if ind and ind.Visible then 
-                                        local sz=gui:FindFirstChild("SuccessZone") or gui:FindFirstChild("PerfectZone") 
-                                        if sz then 
-                                            VIM:SendKeyEvent(true,Enum.KeyCode.Space,false,game) 
-                                            task.wait(0.02) 
-                                            VIM:SendKeyEvent(false,Enum.KeyCode.Space,false,game) 
-                                        end 
-                                    end 
-                                end 
-                            end 
-                        end 
-                    end) 
-                end 
+            while task.wait(0.15) do 
+                if not (S.Rep.Gen or S.Rep.Heal) then continue end
+                pcall(function() 
+                    local pg=LP:FindFirstChild("PlayerGui") 
+                    if not pg then return end
+                    -- rebuild cache setiap 3 detik, bukan tiap frame
+                    if tick()-_skCacheT>3 then
+                        _skCache={}
+                        for _,sg in ipairs(pg:GetChildren()) do
+                            if sg:IsA("ScreenGui") then
+                                for _,gui in ipairs(sg:GetDescendants()) do
+                                    if gui:IsA("Frame") then
+                                        local gn=gui.Name:lower()
+                                        if gn:find("skillcheck") or gn:find("beceri") or gn:find("skill") then
+                                            table.insert(_skCache,gui)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        _skCacheT=tick()
+                    end
+                    for _,frame in ipairs(_skCache) do
+                        if not frame or not frame.Parent or not frame.Visible then continue end
+                        local ind=frame:FindFirstChild("Indicator") or frame:FindFirstChild("Pointer") or frame:FindFirstChild("Bar")
+                        if ind and ind.Visible then
+                            VIM:SendKeyEvent(true,Enum.KeyCode.Space,false,game)
+                            task.wait(0.05)
+                            VIM:SendKeyEvent(false,Enum.KeyCode.Space,false,game)
+                        end
+                    end
+                end) 
             end 
         end) 
     end) 
@@ -506,26 +526,52 @@ local function StartRepair()
     S.Rep.Gen=true 
     SetupSkill() 
     task.spawn(function() 
+        local lastTargetGen=nil 
+        local lastTargetTime=0 
+        local REPAIR_TIMEOUT=35 -- pindah ke gen lain jika stuck > 35 detik
         while S.Rep.Gen do 
-            task.wait(1.2) 
+            task.wait(1.5)  -- mobile: 1.5s interval
             if not S.Rep.Gen then break end 
-            if Lobby:Check() then task.wait(3) continue end 
+            if Lobby:Check() then lastTargetGen=nil task.wait(3) continue end 
             local mr=GetRoot(GetChar(LP)) 
-            if not mr then continue end 
+            if not mr then lastTargetGen=nil continue end 
             ScanGens() 
+            -- Reset target jika gen sudah selesai / hilang / timeout
+            if lastTargetGen then 
+                local st=GetGenStatus(lastTargetGen) 
+                if st=="HIDUP" or not lastTargetGen.Parent or tick()-lastTargetTime>REPAIR_TIMEOUT then 
+                    lastTargetGen=nil 
+                    task.wait(0.5) -- jeda kecil agar karakter tidak langsung nempel ke gen berikutnya
+                    continue 
+                end 
+            end 
             for _,g in pairs(CachedGens) do 
-                if g and g.Parent and GetGenStatus(g)~="HIDUP" then 
-                    local ok,pos=pcall(function() return g:IsA("Model") and g:GetBoundingBox().Position or g.Position end) 
-                    if ok and pos and (mr.Position-pos).Magnitude<10 then 
-                        for _,o in pairs(g:GetDescendants()) do 
-                            if o:IsA("ProximityPrompt") then pcall(fireproximityprompt,o) break end 
-                        end 
-                        for _,r in pairs(RepairRemotes) do pcall(function() r:FireServer(g) end) end 
-                        break 
+                if not g or not g.Parent then continue end 
+                local st=GetGenStatus(g) 
+                if st=="HIDUP" then continue end -- SKIP gen yang sudah selesai
+                local ok,pos=pcall(function() return g:IsA("Model") and g:GetBoundingBox().Position or g.Position end) 
+                if ok and pos and (mr.Position-pos).Magnitude<10 then 
+                    if lastTargetGen~=g then 
+                        lastTargetGen=g 
+                        lastTargetTime=tick() 
                     end 
+                    -- Cari ProximityPrompt dari Children dulu (lebih ringan)
+                    local pp=nil 
+                    for _,o in pairs(g:GetChildren()) do 
+                        if o:IsA("ProximityPrompt") then pp=o break end 
+                    end 
+                    if not pp then 
+                        for _,o in pairs(g:GetDescendants()) do 
+                            if o:IsA("ProximityPrompt") then pp=o break end 
+                        end 
+                    end 
+                    if pp then pcall(fireproximityprompt,pp) end 
+                    for _,r in pairs(RepairRemotes) do pcall(function() r:FireServer(g) end) end 
+                    break 
                 end 
             end 
         end 
+        lastTargetGen=nil 
     end) 
 end
 
@@ -804,7 +850,9 @@ function Aim:Start()
     if self.Active then return end 
     self.Active,S.Aim.AAO=true,true 
     DC("Aim") 
+    local _aimFS=0
     Conn["Aim"]=RS.RenderStepped:Connect(function() 
+        _aimFS=_aimFS+1 if _aimFS%3~=0 then return end
         if not self.Active or not S.Aim.AAO then return end 
         if Lobby:Check() then self.Target=nil return end 
         Cam=WS.CurrentCamera 
@@ -1142,7 +1190,7 @@ local function StartParry()
     task.spawn(function() 
         local VIM=game:GetService("VirtualInputManager") 
         while S.Parry.PO do 
-            task.wait(0.08) 
+            task.wait(0.2) 
             if not S.Parry.PO then break end 
             if Lobby:Check() then task.wait(2) continue end 
             local myRole=GetRole(LP) 
